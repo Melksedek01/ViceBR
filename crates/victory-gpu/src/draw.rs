@@ -1248,6 +1248,8 @@ impl State {
                     }
                 }
             }
+            #[cfg(feature = "diagnostics")]
+            self.trace_dynamic_table(table, first, &host, &entries);
             made.push((slot, first * 32));
         }
         made
@@ -1292,12 +1294,12 @@ impl State {
         }
     }
 
-    /// Logs the descriptor bindings for a selected indirect call before its
-    /// arguments are touched.  This is deliberately CPU-only: it can be
-    /// used together with the address triage switch when executing the call
-    /// would remove the device.
+    /// Logs the descriptor bindings for a selected indirect call before and
+    /// after the host root tables are bound. This is deliberately CPU-only:
+    /// it can be used together with the address triage switch when executing
+    /// the call would remove the device.
     #[cfg(feature = "diagnostics")]
-    fn trace_indirect_bindings(&self, kind: u32, max: u32, arguments: u64) {
+    fn trace_indirect_bindings(&self, phase: &str, kind: u32, max: u32, arguments: u64) {
         static LOGGED: AtomicU64 = AtomicU64::new(0);
         let name = crate::pipeline::shaders_of(self.pipeline as This);
         if !crate::capture::trace_indirect(&name)
@@ -1307,12 +1309,50 @@ impl State {
         }
         tracing::info!(
             target: "victory_gpu::trace",
+            phase,
             kind,
             max,
             arguments = format_args!("{arguments:#x}"),
             shaders = %name,
             reads = ?self.reads(kind == 2),
             "selected indirect bindings"
+        );
+    }
+
+    /// Logs the real dynamic-table slots made for an indirect shader selected
+    /// with `VICTORY_TRACE_INDIRECT_SHADERS`.  The ordinary binding trace
+    /// describes title slots; this one records the replacement slots the
+    /// host actually gives D3D12 when a title table is out of range.
+    #[cfg(feature = "diagnostics")]
+    fn trace_dynamic_table(
+        &self,
+        table: u64,
+        first: u32,
+        host: &crate::descriptor::host::HostHeap,
+        entries: &[&UsedResource],
+    ) {
+        static LOGGED: AtomicU64 = AtomicU64::new(0);
+        let name = crate::pipeline::shaders_of(self.pipeline as This);
+        if !crate::capture::trace_indirect(&name)
+            || LOGGED.fetch_add(1, Ordering::Relaxed) >= 16
+        {
+            return;
+        }
+        let slots: Vec<String> = entries
+            .iter()
+            .map(|u| {
+                let index = first + u.table_offset_dwords / 8;
+                let made = host.describe_slot(index).unwrap_or_else(|| "missing".into());
+                format!("{:?} s{}+{} -> dynamic {index}: {made}", u.kind, u.slot, u.table_offset_dwords)
+            })
+            .collect();
+        tracing::info!(
+            target: "victory_gpu::trace",
+            shaders = %name,
+            title_table = format_args!("{table:#x}"),
+            dynamic_first = first,
+            slots = ?slots,
+            "selected indirect dynamic table"
         );
     }
 
@@ -1619,7 +1659,7 @@ impl State {
         count: Option<u64>,
     ) -> bool {
         #[cfg(feature = "diagnostics")]
-        self.trace_indirect_bindings(kind, max, arguments);
+        self.trace_indirect_bindings("before-bind", kind, max, arguments);
         // Skip before the argument clamp can mutate the indirect buffer.
         #[cfg(feature = "diagnostics")]
         if triage_indirect_address(arguments) {
@@ -1756,6 +1796,8 @@ impl State {
             }
             return false;
         }
+        #[cfg(feature = "diagnostics")]
+        self.trace_indirect_bindings("after-bind", kind, max, arguments);
         #[cfg(feature = "diagnostics")]
         list.note_op(|| {
             self.op_text(format!("indirect kind {kind} max {max} at {arguments:#x}"), kind == DISPATCH)
