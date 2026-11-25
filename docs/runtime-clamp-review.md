@@ -39,3 +39,11 @@ Finished `release` profile [optimized + debuginfo]
 Esta alteração não contém dados, executáveis, chaves ou quaisquer arquivos do
 título. A execução continua sendo responsabilidade do ambiente local e deve
 usar o isolamento de rede configurado pelo operador.
+
+## Triagem de remoção de dispositivo
+
+Para diagnóstico somente, `VICTORY_TRIAGE_SKIP_INDIRECT_ADDRESS=0x...` suprime
+um consumidor indirect único cujo endereço de argumentos coincide exatamente.
+O log o marca como `TRIAGE`; não é uma correção e não deve ser usado como
+configuração normal. Ele existe para confirmar uma ocorrência apontada por
+DRED sem suprimir as demais ocorrências do mesmo pipeline.

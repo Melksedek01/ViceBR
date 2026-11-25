@@ -164,6 +164,27 @@ thread_local! {
     static NOT_RUN: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
 }
 
+/// Opt-in diagnostic triage: drops precisely one indirect consumer selected
+/// by its title argument address. This is intentionally not a compatibility
+/// path; it lets DRED's offending address be tested without suppressing every
+/// occurrence of the same pipeline.
+#[cfg(feature = "diagnostics")]
+fn triage_indirect_address(arguments: u64) -> bool {
+    static ADDRESS: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    let selected = ADDRESS.get_or_init(|| {
+        let value = std::env::var("VICTORY_TRIAGE_SKIP_INDIRECT_ADDRESS").ok()?;
+        let text = value.trim().trim_start_matches("0x");
+        match u64::from_str_radix(text, 16) {
+            Ok(address) => Some(address),
+            Err(_) => {
+                tracing::warn!(value, "VICTORY_TRIAGE_SKIP_INDIRECT_ADDRESS expects a hexadecimal title address");
+                None
+            }
+        }
+    });
+    *selected == Some(arguments)
+}
+
 /// Notes why the draw or dispatch being prepared cannot run (diagnostics).
 fn not_run(why: &'static str) {
     #[cfg(feature = "diagnostics")]
@@ -1574,6 +1595,15 @@ impl State {
         count: Option<u64>,
     ) -> bool {
         // Skip before the argument clamp can mutate the indirect buffer.
+        #[cfg(feature = "diagnostics")]
+        if triage_indirect_address(arguments) {
+            crate::pipeline::note_drop(self.pipeline as This);
+            list.note_op(|| format!(
+                "TRIAGE (skip indirect address {arguments:#x}) kind {kind} {}",
+                crate::pipeline::shaders_of(self.pipeline as This)
+            ));
+            return false;
+        }
         #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
             crate::pipeline::note_drop(self.pipeline as This);
