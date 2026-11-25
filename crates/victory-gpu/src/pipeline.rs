@@ -138,10 +138,50 @@ impl Shader {
                         "shader does not translate; its pipelines' draws are dropped"
                     ),
                 }
+                if let Ok(t) = &done {
+                    self.dump_selected(t);
+                }
                 done.ok()
             })
             .as_ref()
     }
+
+    /// Opt-in shader capture for diagnosing a host pipeline.  The title's
+    /// container and its translated DXIL are both written, so an external
+    /// disassembler can compare the input with the program sent to the PC
+    /// driver.  Nothing is dumped unless both variables are set:
+    /// `VICTORY_DUMP_SHADER=<16-digit hash>` and
+    /// `VICTORY_DUMP_SHADER_DIR=<directory>`.
+    #[cfg(feature = "diagnostics")]
+    fn dump_selected(&self, translated: &Translated) {
+        static SELECTED: OnceLock<Option<String>> = OnceLock::new();
+        let selected = SELECTED.get_or_init(|| {
+            std::env::var("VICTORY_DUMP_SHADER")
+                .ok()
+                .map(|value| value.trim().trim_start_matches("0x").to_ascii_lowercase())
+                .filter(|value| value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        });
+        if selected.as_deref() != Some(self.hash.as_str()) {
+            return;
+        }
+        let Some(dir) = std::env::var_os("VICTORY_DUMP_SHADER_DIR").map(std::path::PathBuf::from) else {
+            tracing::warn!(hash = %self.hash, "selected shader dump has no VICTORY_DUMP_SHADER_DIR");
+            return;
+        };
+        let write = || -> std::io::Result<()> {
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join(format!("{}.container", self.hash)), &self.container)?;
+            std::fs::write(dir.join(format!("{}.dxil", self.hash)), &translated.host.dxil)?;
+            Ok(())
+        };
+        match write() {
+            Ok(()) => tracing::info!(hash = %self.hash, dir = %dir.display(), "selected shader dumped"),
+            Err(error) => tracing::warn!(hash = %self.hash, dir = %dir.display(), %error, "selected shader dump failed"),
+        }
+    }
+
+    #[cfg(not(feature = "diagnostics"))]
+    fn dump_selected(&self, _: &Translated) {}
 }
 
 /// This thread's processor time so far, user and kernel, in 100 ns units.
