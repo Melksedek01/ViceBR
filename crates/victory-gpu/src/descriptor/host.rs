@@ -1485,6 +1485,24 @@ mod tests {
         assert!(unsafe { host.device.GetDeviceRemovedReason() }.is_ok());
     }
 
+    /// Console acceleration-structure descriptors are consumed by the
+    /// software BVH lowering, not by D3D12 ray tracing. Their otherwise
+    /// unused table entries must nevertheless be valid generic SRVs: an AS
+    /// SRV with Location zero is rejected by the driver.
+    #[test]
+    fn null_bvh_descriptor_is_accepted_by_the_device() {
+        let Some(host) = host() else {
+            return; // no host GPU
+        };
+        let Some(heap) = HostHeap::new(false, 4) else {
+            return;
+        };
+        let view = View::Shader(0, Some([0, 11, 0, 0, 0, 0, 0, 0, 0, 0]));
+        null_for(&view, heap.cpu(0));
+        // SAFETY: a plain device query.
+        assert!(unsafe { host.device.GetDeviceRemovedReason() }.is_ok());
+    }
+
     /// Dynamic slots stay taken until given back, and runs do not wrap.
     #[test]
     fn dynamic_slots_are_held_until_released() {
