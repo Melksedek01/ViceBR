@@ -1292,6 +1292,30 @@ impl State {
         }
     }
 
+    /// Logs the descriptor bindings for a selected indirect call before its
+    /// arguments are touched.  This is deliberately CPU-only: it can be
+    /// used together with the address triage switch when executing the call
+    /// would remove the device.
+    #[cfg(feature = "diagnostics")]
+    fn trace_indirect_bindings(&self, kind: u32, max: u32, arguments: u64) {
+        static LOGGED: AtomicU64 = AtomicU64::new(0);
+        let name = crate::pipeline::shaders_of(self.pipeline as This);
+        if !crate::capture::trace_indirect(&name)
+            || LOGGED.fetch_add(1, Ordering::Relaxed) >= 32
+        {
+            return;
+        }
+        tracing::info!(
+            target: "victory_gpu::trace",
+            kind,
+            max,
+            arguments = format_args!("{arguments:#x}"),
+            shaders = %name,
+            reads = ?self.reads(kind == 2),
+            "selected indirect bindings"
+        );
+    }
+
     /// In a listed frame: each small buffer (64 bytes at most) the draw's
     /// tables name, as title memory now and as its host copy when the list
     /// is submitted (before the GPU runs it) and after it has run.
@@ -1594,6 +1618,8 @@ impl State {
         arguments: u64,
         count: Option<u64>,
     ) -> bool {
+        #[cfg(feature = "diagnostics")]
+        self.trace_indirect_bindings(kind, max, arguments);
         // Skip before the argument clamp can mutate the indirect buffer.
         #[cfg(feature = "diagnostics")]
         if triage_indirect_address(arguments) {
