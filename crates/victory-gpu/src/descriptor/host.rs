@@ -1276,14 +1276,13 @@ fn null_for(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) {
             desc.map(|d| d[1]),
         ),
         View::Placed(true, resource, desc) => (resource[0] == 1, Some(desc[1])),
-        // An acceleration-structure SRV is neither a texture nor a buffer.
-        // Falling through to `null_view` makes a 2D descriptor occupy a slot
-        // whose shader declaration is an AS, which is invalid even when a
-        // dispatch ends up having zero groups.  The software BVH lowering
-        // reads the title's node memory itself, so this deliberately null AS
-        // only supplies the correctly typed unused descriptor table entry.
+        // Console acceleration-structure descriptors are traversed by the
+        // software BVH lowering, which reads title memory directly.  They do
+        // not have a host D3D12 AS backing them.  A D3D12 AS descriptor with
+        // Location 0 is rejected by the driver, so use a valid raw-buffer
+        // SRV for this otherwise unused generic SRV table entry instead.
         View::Shader(_, Some(desc)) if desc[1] == 11 => {
-            return null_acceleration_structure(at);
+            return null_buffer_view(at);
         }
         // Shader views of buffers read nothing through a null buffer view:
         // a null 2D view where the shader expects a buffer is a mismatch
@@ -1380,28 +1379,6 @@ fn null_buffer_view(at: D3D12_CPU_DESCRIPTOR_HANDLE) {
         },
     };
     // SAFETY: a slot of our heap; a null resource is allowed with a desc.
-    unsafe {
-        host.device
-            .CreateShaderResourceView(None::<&ID3D12Resource>, Some(&desc), at)
-    };
-}
-
-/// A correctly typed null D3D12 acceleration-structure SRV.  It is not a
-/// substitute for a host-built AS: the translated console BVH instructions
-/// traverse title memory in software.  Its purpose is to keep a declared AS
-/// table entry type-correct when no native D3D12 AS backs that title view.
-fn null_acceleration_structure(at: D3D12_CPU_DESCRIPTOR_HANDLE) {
-    let Some(host) = host() else { return };
-    let desc = D3D12_SHADER_RESOURCE_VIEW_DESC {
-        ViewDimension: D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE,
-        Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
-            RaytracingAccelerationStructure: D3D12_RAYTRACING_ACCELERATION_STRUCTURE_SRV {
-                Location: 0,
-            },
-        },
-        ..Default::default()
-    };
-    // SAFETY: D3D12 permits a null resource for a null AS descriptor.
     unsafe {
         host.device
             .CreateShaderResourceView(None::<&ID3D12Resource>, Some(&desc), at)
