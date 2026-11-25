@@ -429,6 +429,16 @@ mod tests {
         assert!(super::clamp().is_some());
     }
 
+    /// The non-destructive production clamp has a different root signature
+    /// (four UAVs rather than the legacy two), so compile it independently.
+    #[test]
+    fn copy_argument_clamp_builds() {
+        if super::host().is_none() {
+            return; // no host GPU here
+        }
+        assert!(super::copy_clamp().is_some());
+    }
+
     /// Clamps `records` records of `kind`, filled by repeating `words`,
     /// `calls` times in one list: each record's first word after (zero when
     /// it runs empty). One record more follows them and must stay as
